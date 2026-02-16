@@ -102,6 +102,54 @@ public class DocxController {
 
     // ===== HELPER METHODS (Security & Validation) =====
 
+    // ===== 6. DELETE PAGES =====
+    @PostMapping(value = "/delete", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<byte[]> delete(
+            HttpServletRequest request,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam("pages") String pages // e.g., "1, 5-8"
+    ) throws Exception {
+
+        if (!allowRequest(request)) return tooManyRequests();
+        validateFile(file);
+
+        byte[] resultBytes = pdfService.deletePages(file.getBytes(), pages);
+        return buildPdfResponse(resultBytes, "Deleted_Pages.pdf");
+    }
+
+    // ===== 7. REARRANGE PAGES =====
+    @PostMapping(value = "/rearrange", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<byte[]> rearrange(
+            HttpServletRequest request,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam("order") String order // e.g., "3,1,2"
+    ) throws Exception {
+
+        if (!allowRequest(request)) return tooManyRequests();
+        validateFile(file);
+
+        byte[] resultBytes = pdfService.rearrangePages(file.getBytes(), order);
+        return buildPdfResponse(resultBytes, "Rearranged_Document.pdf");
+    }
+
+    // ===== 8. ADD PAGE NUMBERS =====
+    @PostMapping(value = "/add-page-numbers", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<byte[]> addPageNumbers(
+            HttpServletRequest request,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam("position") String position,
+            @RequestParam("margin") String margin,
+            @RequestParam("startNumber") int startNumber,
+            @RequestParam("format") String format
+    ) throws Exception {
+
+        if (!allowRequest(request)) return tooManyRequests();
+        validateFile(file);
+
+        byte[] resultBytes = pdfService.addPageNumbers(file.getBytes(), position, margin, startNumber, format);
+        return buildPdfResponse(resultBytes, "Numbered_Document.pdf");
+    }
+
     private void validateFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("No file uploaded.");
