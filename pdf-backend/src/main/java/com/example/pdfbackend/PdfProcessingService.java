@@ -151,159 +151,15 @@ public class PdfProcessingService {
         // For now, this just passes it through safely to prove the API connects.
         return inputBytes; 
     }
-    package com.example.pdfbackend;
-
-import org.apache.pdfbox.multipdf.LayerUtility;
-import org.apache.pdfbox.multipdf.PDFMergerUtility;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.common.PDRectangle;
-import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
-import org.apache.pdfbox.util.Matrix;
-import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.util.Locale;
-
-@Service
-public class PdfProcessingService {
-
-    // ==========================================
-    // 1. PAGES PER SHEET & YOUR FOLDABLE LOGIC
-    // ==========================================
-    public byte[] generatePagesPerSheet(byte[] inputBytes, int pagesPerSheet, String paperSize, String mode) throws Exception {
-        
-        PDRectangle outSize = switch (paperSize.toUpperCase(Locale.ROOT)) {
-            case "A3" -> PDRectangle.A3;
-            case "LETTER" -> PDRectangle.LETTER;
-            case "LEGAL" -> PDRectangle.LEGAL;
-            default -> PDRectangle.A4;
-        };
-
-        boolean foldable = mode != null && mode.toLowerCase(Locale.ROOT).startsWith("fold");
-
-        try (PDDocument src = PDDocument.load(inputBytes);
-             PDDocument dest = new PDDocument();
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-
-            int srcCount = src.getNumberOfPages();
-            LayerUtility layer = new LayerUtility(dest);
-
-            if (!foldable) {
-                int totalSheets = (int) Math.ceil(srcCount / (double) pagesPerSheet);
-                for (int i = 0; i < totalSheets; i++) {
-                    PDPage outPage = new PDPage(outSize);
-                    dest.addPage(outPage);
-
-                    try (PDPageContentStream cs = new PDPageContentStream(dest, outPage)) {
-                        for (int j = 0; j < pagesPerSheet; j++) {
-                            int srcIndex1 = (i * pagesPerSheet) + j + 1;
-                            if (srcIndex1 <= srcCount) {
-                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize);
-                            }
-                        }
-                    }
-                }
-            } else {
-                int totalSheets = (int) Math.ceil(srcCount / (double) (pagesPerSheet * 2));
-
-                // 1) Fronts
-                for (int i = 0; i < totalSheets; i++) {
-                    PDPage outPage = new PDPage(outSize);
-                    dest.addPage(outPage);
-
-                    int batchStart0 = i * (pagesPerSheet * 2);
-
-                    try (PDPageContentStream cs = new PDPageContentStream(dest, outPage)) {
-                        for (int j = 0; j < pagesPerSheet; j++) {
-                            int srcIndex1 = batchStart0 + (j * 2) + 1; 
-                            if (srcIndex1 <= srcCount) {
-                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize);
-                            }
-                        }
-                    }
-                }
-
-                // 2) Backs
-                int cols = gridCols(pagesPerSheet);
-                for (int i = 0; i < totalSheets; i++) {
-                    PDPage outPage = new PDPage(outSize);
-                    dest.addPage(outPage);
-
-                    int batchStart0 = i * (pagesPerSheet * 2);
-
-                    try (PDPageContentStream cs = new PDPageContentStream(dest, outPage)) {
-                        for (int j = 0; j < pagesPerSheet; j++) {
-                            int row = j / cols;
-                            int col = j % cols;
-                            int reversedCol = cols - 1 - col;
-                            int reversedPos = row * cols + reversedCol;
-
-                            int srcIndex1 = batchStart0 + (reversedPos * 2) + 2; 
-                            if (srcIndex1 <= srcCount) {
-                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize);
-                            }
-                        }
-                    }
-                }
-            }
-
-            dest.save(out);
-            return out.toByteArray();
-        }
-    }
-
-    // ==========================================
-    // 2. MERGE PDF
-    // ==========================================
-    public byte[] mergePdfs(MultipartFile[] files) throws Exception {
-        PDFMergerUtility merger = new PDFMergerUtility();
-        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            merger.setDestinationStream(out);
-            for (MultipartFile file : files) {
-                try (InputStream is = file.getInputStream()) {
-                    merger.addSource(is);
-                }
-            }
-            merger.mergeDocuments(org.apache.pdfbox.io.MemoryUsageSetting.setupMainMemoryOnly());
-            return out.toByteArray();
-        }
-    }
-
-    // ==========================================
-    // 3. SPLIT PDF
-    // ==========================================
-    public byte[] splitPdf(byte[] inputBytes, String pagesStr) throws Exception {
-        try (PDDocument src = PDDocument.load(inputBytes);
-             PDDocument dest = new PDDocument();
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-             
-            if (src.getNumberOfPages() > 0) {
-                dest.addPage(src.getPage(0)); 
-            }
-            dest.save(out);
-            return out.toByteArray();
-        }
-    }
-
-    // ==========================================
-    // 4. COMPRESS PDF
-    // ==========================================
-    public byte[] compressPdf(byte[] inputBytes, String level) throws Exception {
-        return inputBytes; 
-    }
-
-    // ==========================================
-    // 5. DELETE PAGES (Fixed & Added)
+   // ==========================================
+    // 5. DELETE PAGES
     // ==========================================
     public byte[] deletePages(byte[] inputBytes, String pagesStr) throws Exception {
         try (PDDocument src = PDDocument.load(inputBytes);
              PDDocument dest = new PDDocument();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
+            // Parse the comma-separated string (e.g., "1,3,5") into a Set
             java.util.Set<Integer> pagesToDelete = new java.util.HashSet<>();
             if (pagesStr != null && !pagesStr.isBlank()) {
                 String[] tokens = pagesStr.split(",");
@@ -314,9 +170,11 @@ public class PdfProcessingService {
                 }
             }
 
+            // Add all pages EXCEPT the ones in the delete list
             int totalPages = src.getNumberOfPages();
             for (int i = 1; i <= totalPages; i++) {
                 if (!pagesToDelete.contains(i)) {
+                    // PDFBox uses 0-based indexing for pages
                     dest.addPage(src.getPage(i - 1));
                 }
             }
@@ -327,18 +185,20 @@ public class PdfProcessingService {
     }
 
     // ==========================================
-    // 6. REARRANGE PAGES (Fixed & Added)
+    // 6. REARRANGE PAGES
     // ==========================================
     public byte[] rearrangePages(byte[] inputBytes, String order) throws Exception {
         try (PDDocument src = PDDocument.load(inputBytes);
              PDDocument dest = new PDDocument();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
+            // Parse the new order string (e.g., "3,1,2")
             if (order != null && !order.isBlank()) {
                 String[] tokens = order.split(",");
                 for (String token : tokens) {
                     try {
                         int pageNum = Integer.parseInt(token.trim());
+                        // Ensure the requested page actually exists in the source document
                         if (pageNum >= 1 && pageNum <= src.getNumberOfPages()) {
                             dest.addPage(src.getPage(pageNum - 1));
                         }
@@ -350,9 +210,6 @@ public class PdfProcessingService {
             return out.toByteArray();
         }
     }
-
-  
-
     // ==========================================
     // HELPER METHODS (From your original code)
     // ==========================================
@@ -463,3 +320,4 @@ public class PdfProcessingService {
     }
 
 }
+
