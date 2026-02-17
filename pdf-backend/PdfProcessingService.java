@@ -151,7 +151,65 @@ public class PdfProcessingService {
         // For now, this just passes it through safely to prove the API connects.
         return inputBytes; 
     }
+// ==========================================
+    // 5. DELETE PAGES
+    // ==========================================
+    public byte[] deletePages(byte[] inputBytes, String pagesStr) throws Exception {
+        try (PDDocument src = PDDocument.load(inputBytes);
+             PDDocument dest = new PDDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
+            // Parse the comma-separated string (e.g., "1,3,5") into a Set
+            java.util.Set<Integer> pagesToDelete = new java.util.HashSet<>();
+            if (pagesStr != null && !pagesStr.isBlank()) {
+                String[] tokens = pagesStr.split(",");
+                for (String token : tokens) {
+                    try {
+                        pagesToDelete.add(Integer.parseInt(token.trim()));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+
+            // Add all pages EXCEPT the ones in the delete list
+            int totalPages = src.getNumberOfPages();
+            for (int i = 1; i <= totalPages; i++) {
+                if (!pagesToDelete.contains(i)) {
+                    // PDFBox uses 0-based indexing for pages
+                    dest.addPage(src.getPage(i - 1));
+                }
+            }
+
+            dest.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    // ==========================================
+    // 6. REARRANGE PAGES
+    // ==========================================
+    public byte[] rearrangePages(byte[] inputBytes, String order) throws Exception {
+        try (PDDocument src = PDDocument.load(inputBytes);
+             PDDocument dest = new PDDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+
+            // Parse the new order string (e.g., "3,1,2")
+            if (order != null && !order.isBlank()) {
+                String[] tokens = order.split(",");
+                for (String token : tokens) {
+                    try {
+                        int pageNum = Integer.parseInt(token.trim());
+                        // Ensure the requested page actually exists in the source document
+                        if (pageNum >= 1 && pageNum <= src.getNumberOfPages()) {
+                            dest.addPage(src.getPage(pageNum - 1));
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+
+            dest.save(out);
+            return out.toByteArray();
+        }
+    }
     // ==========================================
     // HELPER METHODS (From your original code)
     // ==========================================
@@ -260,4 +318,5 @@ public class PdfProcessingService {
         cs.drawForm(form);
         cs.restoreGraphicsState();
     }
+
 }
