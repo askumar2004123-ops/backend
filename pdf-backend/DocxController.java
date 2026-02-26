@@ -84,6 +84,26 @@ public class DocxController {
         return buildPdfResponse(resultBytes, "Split_Document.pdf");
     }
 
+    // ===== 8. CHEAT SHEET MAKER (CATCHES /submit-multi) =====
+    @PostMapping(value = "/submit-multi", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<byte[]> createCheatSheet(
+            HttpServletRequest request,
+            @RequestPart("images") List<MultipartFile> images,
+            @RequestParam("mode") String mode
+    ) throws Exception {
+
+        if (!allowRequest(request)) return tooManyRequests();
+        
+        // Basic validation
+        if (images == null || images.isEmpty()) {
+            return ResponseEntity.badRequest().body("No images uploaded.".getBytes());
+        }
+
+        // Sends the images to the PdfProcessingService we built earlier
+        byte[] resultBytes = pdfService.createImageSummary(images, mode);
+        return buildPdfResponse(resultBytes, "CheatSheet_Ready.pdf");
+    }
+    
     // ===== 5. COMPRESS PDF =====
     @PostMapping(value = "/compress", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<byte[]> compress(
@@ -189,4 +209,5 @@ public class DocxController {
             return true;
         }
     }
+
 }
