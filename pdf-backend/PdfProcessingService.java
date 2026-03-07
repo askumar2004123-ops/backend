@@ -1,5 +1,9 @@
 package com.example.pdfbackend;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.util.Locale;
+
 import org.apache.pdfbox.multipdf.LayerUtility;
 import org.apache.pdfbox.multipdf.PDFMergerUtility;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -11,24 +15,24 @@ import org.apache.pdfbox.util.Matrix;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.util.Locale;
-
 @Service
 public class PdfProcessingService {
 
     // ==========================================
-    // 1. PAGES PER SHEET & YOUR FOLDABLE LOGIC
+    // 1. PAGES PER SHEET & BOOKLET (Fully Fixed)
     // ==========================================
     public byte[] generatePagesPerSheet(byte[] inputBytes, int pagesPerSheet, String paperSize, String mode) throws Exception {
         
-        PDRectangle outSize = switch (paperSize.toUpperCase(Locale.ROOT)) {
-            case "A3" -> PDRectangle.A3;
-            case "LETTER" -> PDRectangle.LETTER;
-            case "LEGAL" -> PDRectangle.LEGAL;
-            default -> PDRectangle.A4;
-        };
+        // Always default to A4
+        PDRectangle baseSize = PDRectangle.A4; 
+
+        // Did the user select Landscape in the Flutter dropdown?
+        boolean isLandscape = paperSize != null && paperSize.equalsIgnoreCase("Landscape");
+        
+        // Flip the paper dimensions if Landscape
+        PDRectangle outSize = isLandscape ? 
+                new PDRectangle(baseSize.getHeight(), baseSize.getWidth()) : 
+                baseSize;
 
         boolean foldable = mode != null && mode.toLowerCase(Locale.ROOT).startsWith("fold");
 
@@ -40,7 +44,7 @@ public class PdfProcessingService {
             LayerUtility layer = new LayerUtility(dest);
 
             if (!foldable) {
-                // ===== STANDARD: sequential pages 1..n =====
+                // ===== STANDARD MODE (No Mirroring) =====
                 int totalSheets = (int) Math.ceil(srcCount / (double) pagesPerSheet);
                 for (int i = 0; i < totalSheets; i++) {
                     PDPage outPage = new PDPage(outSize);
@@ -50,51 +54,54 @@ public class PdfProcessingService {
                         for (int j = 0; j < pagesPerSheet; j++) {
                             int srcIndex1 = (i * pagesPerSheet) + j + 1;
                             if (srcIndex1 <= srcCount) {
-                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize);
+                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize, isLandscape);
                             }
                         }
                     }
                 }
             } else {
-                // ===== YOUR CUSTOM FOLDABLE LOGIC (Kept 100% intact) =====
-                // Fronts = odd pages, backs = even pages (row-wise mirrored columns)
+                // ===== FOLDABLE (BOOKLET) MODE =====
+                // Alternating Front & Back generation perfectly sequences the pages for printers!
                 int totalSheets = (int) Math.ceil(srcCount / (double) (pagesPerSheet * 2));
+                int cols = gridCols(pagesPerSheet, isLandscape);
 
-                // 1) Fronts
                 for (int i = 0; i < totalSheets; i++) {
-                    PDPage outPage = new PDPage(outSize);
-                    dest.addPage(outPage);
-
                     int batchStart0 = i * (pagesPerSheet * 2);
 
-                    try (PDPageContentStream cs = new PDPageContentStream(dest, outPage)) {
+                    // ------------------------------------
+                    // 1) CREATE THIS SHEET'S FRONT PAGE
+                    // ------------------------------------
+                    PDPage frontPage = new PDPage(outSize);
+                    dest.addPage(frontPage);
+
+                    try (PDPageContentStream cs = new PDPageContentStream(dest, frontPage)) {
                         for (int j = 0; j < pagesPerSheet; j++) {
                             int srcIndex1 = batchStart0 + (j * 2) + 1; 
                             if (srcIndex1 <= srcCount) {
-                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize);
+                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize, isLandscape);
                             }
                         }
                     }
-                }
 
-                // 2) Backs
-                int cols = gridCols(pagesPerSheet);
-                for (int i = 0; i < totalSheets; i++) {
-                    PDPage outPage = new PDPage(outSize);
-                    dest.addPage(outPage);
+                    // ------------------------------------
+                    // 2) CREATE THIS SHEET'S BACK PAGE 
+                    // ------------------------------------
+                    // Always add a back page to keep the double-sided print aligned!
+                    PDPage backPage = new PDPage(outSize);
+                    dest.addPage(backPage);
 
-                    int batchStart0 = i * (pagesPerSheet * 2);
-
-                    try (PDPageContentStream cs = new PDPageContentStream(dest, outPage)) {
+                    try (PDPageContentStream cs = new PDPageContentStream(dest, backPage)) {
                         for (int j = 0; j < pagesPerSheet; j++) {
                             int row = j / cols;
                             int col = j % cols;
-                            int reversedCol = cols - 1 - col;
+                            
+                            // Prevent math crashes on 1-column Portrait layouts
+                            int reversedCol = (cols > 1) ? (cols - 1 - col) : col;
                             int reversedPos = row * cols + reversedCol;
 
                             int srcIndex1 = batchStart0 + (reversedPos * 2) + 2; 
                             if (srcIndex1 <= srcCount) {
-                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize);
+                                drawOne(layer, dest, src, cs, srcIndex1 - 1, j, pagesPerSheet, outSize, isLandscape);
                             }
                         }
                     }
@@ -105,7 +112,81 @@ public class PdfProcessingService {
             return out.toByteArray();
         }
     }
+    // ==========================================
+    // HELPER METHODS (Dynamic Grid Engine)
+    // ==========================================
+    private int gridCols(int pagesPerSheet, boolean isLandscape) {
+        if (isLandscape) {
+            return switch (pagesPerSheet) {
+                case 2, 4 -> 2;  // 1/2 creates side-by-side columns to allow perfect folding!
+                case 8, 16 -> 4;
+                default -> 2;
+            };
+        } else {
+            return switch (pagesPerSheet) {
+                case 2 -> 1;
+                case 4, 8 -> 2;
+                case 16 -> 4;
+                default -> 2;
+            };
+        }
+    }
 
+    private int gridRows(int pagesPerSheet, boolean isLandscape) {
+        if (isLandscape) {
+            return switch (pagesPerSheet) {
+                case 2 -> 1;
+                case 4, 8 -> 2;
+                case 16 -> 4;
+                default -> 2;
+            };
+        } else {
+            return switch (pagesPerSheet) {
+                case 2, 4 -> 2;
+                case 8, 16 -> 4;
+                default -> 2;
+            };
+        }
+    }
+
+    private void drawOne(LayerUtility layer, PDDocument dest, PDDocument src, PDPageContentStream cs,
+                         int srcPageIndex0, int positionIndex, int pagesPerSheet, PDRectangle outSize, boolean isLandscape) throws Exception {
+
+        if (srcPageIndex0 < 0 || srcPageIndex0 >= src.getNumberOfPages()) return;
+
+        int cols = gridCols(pagesPerSheet, isLandscape);
+        int rows = gridRows(pagesPerSheet, isLandscape);
+
+        float cellW = outSize.getWidth() / cols;
+        float cellH = outSize.getHeight() / rows;
+
+        int row = positionIndex / cols;
+        int col = positionIndex % cols;
+
+        float cellX = col * cellW;
+        float cellY = outSize.getHeight() - ((row + 1) * cellH);
+
+        PDPage srcPage = src.getPage(srcPageIndex0);
+        PDRectangle srcBox = (srcPage.getCropBox() != null) ? srcPage.getCropBox() : srcPage.getMediaBox();
+
+        float srcW = srcBox.getWidth();
+        float srcH = srcBox.getHeight();
+        float scale = Math.min(cellW / srcW, cellH / srcH);
+
+        float drawW = srcW * scale;
+        float drawH = srcH * scale;
+
+        float offsetX = cellX + (cellW - drawW) / 2f;
+        float offsetY = cellY + (cellH - drawH) / 2f;
+
+        PDFormXObject form = layer.importPageAsForm(src, srcPageIndex0);
+
+        cs.saveGraphicsState();
+        cs.transform(Matrix.getTranslateInstance(offsetX, offsetY));
+        cs.transform(Matrix.getScaleInstance(scale, scale));
+        cs.drawForm(form);
+        cs.restoreGraphicsState();
+    }
     // ==========================================
     // 2. MERGE PDF (New Feature)
     // ==========================================
